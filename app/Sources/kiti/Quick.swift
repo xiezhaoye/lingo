@@ -2,10 +2,10 @@ import SwiftUI
 import AppKit
 import Combine
 
-/// Spotlight-style quick lookup: a small floating search field; Return opens the main window with that query.
+/// Spotlight-style quick lookup: a small floating search field; pausing input or pressing Return shows the translation popover.
 final class QuickPanel: NSPanel {
     override var canBecomeKey: Bool { true }
-    override func cancelOperation(_ sender: Any?) { QuickQuery.hide() }
+    override func cancelOperation(_ sender: Any?) { QuickQuery.hide(dismissPopover: true) }
 }
 
 private struct QuickView: View {
@@ -16,6 +16,7 @@ private struct QuickView: View {
             Image(systemName: "magnifyingglass").font(.system(size: 17)).foregroundStyle(T.fg2)
             TextField("lingo，查询，翻译一句话", text: $text)
                 .textFieldStyle(.plain).font(.system(size: 18)).focused($focused)
+                .onChange(of: text) { QuickQuery.onTextChange($0) }
                 .onSubmit { QuickQuery.commit(text) }
         }
         .padding(.horizontal, 16).frame(width: 460, height: 52)
@@ -30,9 +31,12 @@ private struct QuickView: View {
 enum QuickQuery {
     private static var panel: QuickPanel?
     private static var resign: NSObjectProtocol?
+    private static var debounceTask: Task<Void, Never>?
+
+    static var isVisible: Bool { panel?.isVisible ?? false }
 
     static func toggle() {
-        if let p = panel, p.isVisible { hide() } else { show() }
+        if let p = panel, p.isVisible { hide(dismissPopover: true) } else { show() }
     }
 
     static func show() {
@@ -50,23 +54,59 @@ enum QuickQuery {
         NSApp.activate(ignoringOtherApps: true)
         p.makeKeyAndOrderFront(nil)
         resign = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: p, queue: .main) { _ in
-            Task { @MainActor in QuickQuery.hide() }
+            Task { @MainActor in QuickQuery.hide(dismissPopover: false) }
         }
     }
 
-    static func hide() {
+    static func hide(dismissPopover: Bool = false) {
+        debounceTask?.cancel()
+        debounceTask = nil
         if let r = resign { NotificationCenter.default.removeObserver(r); resign = nil }
         panel?.orderOut(nil)
         panel = nil
+        if dismissPopover { PopoverController.shared.dismiss() }
+    }
+
+    static func onTextChange(_ text: String) {
+        debounceTask?.cancel()
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else {
+            debounceTask = nil
+            PopoverController.shared.dismiss()
+            return
+        }
+        debounceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 650_000_000)
+            guard !Task.isCancelled, isVisible else { return }
+            preview(t)
+        }
+    }
+
+    private static func preview(_ text: String) {
+        guard let rect = panel?.frame else { return }
+        let pop = PopoverController.shared
+        if pop.isVisible && pop.model.kind == .translate && pop.model.text == text { return }
+        pop.showTranslation(text: text, below: rect, returnHook: false)
     }
 
     static func commit(_ text: String) {
+        debounceTask?.cancel()
+        debounceTask = nil
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        hide()
-        guard !t.isEmpty else { return }
-        MainModel.shared.input = t
-        MainWindow.show()
-        MainModel.shared.submit()
+        let rect = panel?.frame
+        hide(dismissPopover: false)
+        guard !t.isEmpty else {
+            PopoverController.shared.dismiss()
+            return
+        }
+        let pop = PopoverController.shared
+        if pop.isVisible && pop.model.kind == .translate && pop.model.text == t {
+            pop.enableReturnHook()
+        } else if let rect = rect {
+            pop.showTranslation(text: t, below: rect, returnHook: true)
+        } else {
+            pop.showTranslation(text: t, at: NSEvent.mouseLocation)
+        }
     }
 }
 

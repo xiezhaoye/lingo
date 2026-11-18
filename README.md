@@ -1,7 +1,7 @@
 <p align="center"><img src="app/Resources/dock-icon.png?v=20261031" width="88" alt="Lingo"></p>
 <h1 align="center">Lingo</h1>
 <p align="center">查词快一点，阅读少一次打断。<br>轻量的 macOS 原生菜单栏词典与翻译工具。</p>
-<p align="center"><a href="https://lingo.xiezhaoye.site/">官网</a> · <a href="https://kiti-dl.xiezhaoye.site/lingo-0.1.2-macos-arm64.zip">下载 lingo 0.1.2（约 1.4 MB）</a> · <a href="https://github.com/xiezhaoye/lingo/releases/latest">GitHub Releases</a> · <a href="https://github.com/xiezhaoye/lingo/issues">问题反馈</a></p>
+<p align="center"><a href="https://lingo.xiezhaoye.site/">官网</a> · <a href="https://kiti-dl.xiezhaoye.site/lingo-0.1.3-macos-arm64.zip">下载 lingo 0.1.3（约 1.4 MB）</a> · <a href="https://github.com/xiezhaoye/lingo/releases/latest">GitHub Releases</a> · <a href="https://github.com/xiezhaoye/lingo/issues">问题反馈</a></p>
 
 ![lingo 主窗口：本机词典、独立美英音标、释义与例句](landing/assets/lingo-main.jpg)
 
@@ -51,7 +51,7 @@
 
 ## 安装
 
-要求 macOS 13+、Apple Silicon。[下载 lingo 0.1.2](https://kiti-dl.xiezhaoye.site/lingo-0.1.2-macos-arm64.zip)，或前往 [GitHub Releases](https://github.com/xiezhaoye/lingo/releases/latest)。解压后将 **lingo.app** 拖入“应用程序”。
+要求 macOS 13+、Apple Silicon。[下载 lingo 0.1.3](https://kiti-dl.xiezhaoye.site/lingo-0.1.3-macos-arm64.zip)，或前往 [GitHub Releases](https://github.com/xiezhaoye/lingo/releases/latest)。解压后将 **lingo.app** 拖入“应用程序”。
 
 安装包未经 Apple 公证：若提示无法验证开发者，在“系统设置 → 隐私与安全性”选择“仍要打开”。首次使用需在“辅助功能”里允许 lingo，用来读取其他 App 中选中的文字。已有 kiti 用户的历史、钥匙串和应用标识保持兼容。
 
@@ -85,7 +85,7 @@ SwiftPM 工程，无第三方包依赖。分发包为 Apple Silicon；其他架�
 
 ## 更多信息
 
-- [0.1.2 发布记录](docs/release-0.1.2.md)：版本变化、安装包校验值与资源测量说明。
+- [0.1.3 发布记录](docs/release-0.1.3.md)：版本变化与安装包校验值。
 - `app/`：应用源码和构建脚本。
 - `landing/`：产品官网和公开演示截图。
 

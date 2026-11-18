@@ -169,7 +169,7 @@ final class MainModel: ObservableObject {
     }
 
     /// `quiet`: never leave the dictionary page (used for clicks and back/forward).
-    func lookup(_ q: String, record: Bool = true, quiet: Bool = false) {
+    func lookup(_ q: String, record: Bool = true, quiet: Bool = false, speak: Bool = true) {
         let w = q.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !w.isEmpty else { return }
         // a sentence or paragraph belongs to the article tab
@@ -188,7 +188,10 @@ final class MainModel: ObservableObject {
         zhQuery = ""; cands = []
         entry = LocalDictionary.lookup(w)
         notFound = entry == nil
-        if let e = entry { addHistory(e.headword) }
+        if let e = entry {
+            addHistory(e.headword)
+            if speak, settings.autoSpeak { Speech.shared.speak(e.headword, lang: settings.autoSpeakAccent) }
+        }
     }
 
     private func loadCandidates(_ zh: String) {
@@ -222,7 +225,7 @@ final class MainModel: ObservableObject {
         }
     }
 
-    func openWord(_ w: String) { lookup(w, quiet: true); MainWindow.show() }
+    func openWord(_ w: String) { lookup(w, quiet: true, speak: false); MainWindow.show() }
 
     func openTranslate(_ text: String, run: Bool) {
         mode = .trans; src = text; input = ""; out = ""; tState = .idle; articleID = nil

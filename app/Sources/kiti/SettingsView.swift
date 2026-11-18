@@ -139,6 +139,7 @@ struct KSwitch: View {
 
 struct SettingsView: View {
     @ObservedObject var s = AppSettings.shared
+    @ObservedObject private var updater = AppUpdater.shared
     @State private var tab = SettingsView.startTab
     @State private var syncPath = HistoryStore.shared.syncFolder
     @State private var syncMsg = ""
@@ -214,7 +215,7 @@ struct SettingsView: View {
         SGroup(title: "快捷键") {
             SRow(label: "自动取词开关", hint: "全局生效，菜单栏图标同步变化", first: true) { KeysBox(sc: $s.scToggle) }
             SRow(label: "打开主窗口") { KeysBox(sc: $s.scMain) }
-            SRow(label: "快速查询", hint: "弹出搜索框，回车后在主窗口显示结果") { KeysBox(sc: $s.scQuick) }
+            SRow(label: "快速查询", hint: "弹出搜索框，停顿或回车后直接显示翻译") { KeysBox(sc: $s.scQuick) }
             SRow(label: "翻译剪贴板内容") { KeysBox(sc: $s.scClip) }
             SRow(label: "朗读选中文字") { KeysBox(sc: $s.scSpeak) }
         }
@@ -340,6 +341,10 @@ struct SettingsView: View {
             SRow(label: "语速") {
                 KPopup(sel: $s.speechRate, items: [(0.6, "0.6×"), (0.8, "0.8×"), (1.0, "1×（正常）"), (1.2, "1.2×"), (1.4, "1.4×")])
             }
+            SRow(label: "查询后自动发音", hint: "查词或划词查出结果后自动朗读") { KSwitch(on: $s.autoSpeak) }
+            SRow(label: "自动发音口音", hint: "英文单词优先使用该口音") {
+                KPopup(sel: $s.autoSpeakAccent, items: [("en-US", "美音"), ("en-GB", "英音")])
+            }
             SRow(label: "试听") {
                 HStack(spacing: 8) {
                     KBtn(title: "英文") { Speech.shared.speak("Serendipity is a lovely word.", lang: "en-US") }
@@ -375,6 +380,39 @@ struct SettingsView: View {
                 SRow(label: "立即同步", hint: syncMsg.isEmpty ? "启动时和之后每 10 分钟自动同步一次" : syncMsg) {
                     KBtn(title: "同步") { syncMsg = HistoryStore.shared.syncNow() }
                 }
+            }
+        }
+        SGroup(title: "版本与更新") {
+            SRow(label: "当前版本", first: true) {
+                Text(updater.currentBuild.isEmpty ? "v\(updater.currentVersion)" : "v\(updater.currentVersion) (\(updater.currentBuild))")
+                    .font(.system(size: 12.5)).foregroundStyle(T.fg2).monospacedDigit()
+            }
+            SRow(label: "软件更新", hint: "从 GitHub Releases 检查最新版本") {
+                updateControl
+            }
+        }
+    }
+
+    @ViewBuilder private var updateControl: some View {
+        HStack(spacing: 8) {
+            switch updater.state {
+            case .idle:
+                KBtn(title: "检查更新") { updater.check() }
+            case .checking:
+                Text("正在检查…").font(.system(size: 12)).foregroundStyle(T.fg2)
+            case .upToDate:
+                Text("已是最新版本").font(.system(size: 12)).foregroundStyle(T.ok)
+                KBtn(title: "重新检查") { updater.check() }
+            case .available(let ver, _, _):
+                Text("发现新版本 v\(ver)").font(.system(size: 12, weight: .medium)).foregroundStyle(T.accent)
+                KBtn(title: "点击更新", primary: true) { updater.install() }
+            case .downloading:
+                Text("正在下载更新…").font(.system(size: 12)).foregroundStyle(T.fg2)
+            case .installing:
+                Text("正在安装并重启…").font(.system(size: 12)).foregroundStyle(T.fg2)
+            case .failed(let msg):
+                Text(msg).font(.system(size: 12)).foregroundStyle(T.bad).lineLimit(2).frame(maxWidth: 190, alignment: .trailing)
+                KBtn(title: "重试") { updater.check() }
             }
         }
     }

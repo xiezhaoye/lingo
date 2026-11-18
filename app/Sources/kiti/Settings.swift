@@ -109,6 +109,8 @@ final class AppSettings: ObservableObject {
     @Published var llmProxy: Bool { didSet { d.set(llmProxy, forKey: "llmProxy") } }
     @Published var uiScale: Double { didSet { d.set(uiScale, forKey: "uiScale") } }
     @Published var speechRate: Double { didSet { d.set(speechRate, forKey: "speechRate") } }
+    @Published var autoSpeak: Bool { didSet { d.set(autoSpeak, forKey: "autoSpeak") } }
+    @Published var autoSpeakAccent: String { didSet { d.set(autoSpeakAccent, forKey: "autoSpeakAccent") } }
     @Published var blacklist: String { didSet { d.set(blacklist, forKey: "blacklist") } }
     @Published var launchAtLogin: Bool {
         didSet {
@@ -173,6 +175,9 @@ final class AppSettings: ObservableObject {
         }
         let sr = d.object(forKey: "speechRate") as? Double ?? 1.0
         speechRate = [0.6, 0.8, 1.0, 1.2, 1.4].min { abs($0 - sr) < abs($1 - sr) } ?? 1.0
+        autoSpeak = d.bool(forKey: "autoSpeak")
+        let accent = d.string(forKey: "autoSpeakAccent") ?? "en-US"
+        autoSpeakAccent = (accent == "en-GB") ? "en-GB" : "en-US"
         blacklist = d.string(forKey: "blacklist") ?? "com.apple.Terminal\ncom.googlecode.iterm2"
         launchAtLogin = d.bool(forKey: "launchAtLogin")
         quitOnClose = d.bool(forKey: "quitOnClose")
@@ -196,4 +201,159 @@ final class AppSettings: ObservableObject {
 
     /// The model name shown in the UI (drops the channel prefix).
     var modelShort: String { model.split(separator: "/").last.map(String.init) ?? model }
+}
+
+@MainActor
+final class AppUpdater: ObservableObject {
+    static let shared = AppUpdater()
+
+    enum State: Equatable {
+        case idle
+        case checking
+        case upToDate
+        case available(version: String, downloadURL: URL?, pageURL: URL)
+        case downloading
+        case installing
+        case failed(String)
+    }
+
+    @Published var state: State = .idle
+
+    var currentVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.3"
+    }
+
+    var currentBuild: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+    }
+
+    func check() {
+        guard state != .checking && state != .downloading && state != .installing else { return }
+        state = .checking
+        Task {
+            do {
+                let api = URL(string: "https://api.github.com/repos/xiezhaoye/lingo/releases/latest")!
+                var req = URLRequest(url: api)
+                req.timeoutInterval = 10
+                req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+                req.setValue("lingo/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                if let http = resp as? HTTPURLResponse, http.statusCode >= 400 {
+                    state = .failed("检查失败（HTTP \(http.statusCode)）")
+                    return
+                }
+                guard let j = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let tag = j["tag_name"] as? String else {
+                    state = .failed("无法解析版本信息")
+                    return
+                }
+                let remote = tag.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
+                let pageStr = (j["html_url"] as? String) ?? "https://github.com/xiezhaoye/lingo/releases/latest"
+                let pageURL = URL(string: pageStr) ?? URL(string: "https://github.com/xiezhaoye/lingo/releases/latest")!
+                let assets = j["assets"] as? [[String: Any]] ?? []
+                let zipAsset = assets.first { ($0["name"] as? String)?.lowercased().hasSuffix(".zip") == true }
+                let dlURL = (zipAsset?["browser_download_url"] as? String).flatMap { URL(string: $0) }
+                if Self.isNewer(remote, than: currentVersion) {
+                    state = .available(version: remote, downloadURL: dlURL, pageURL: pageURL)
+                } else {
+                    state = .upToDate
+                }
+            } catch {
+                state = .failed("检查失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    func install() {
+        guard case .available(let ver, let downloadURL, let pageURL) = state else { return }
+        guard let dl = downloadURL, dl.pathExtension.lowercased() == "zip",
+              Bundle.main.bundleURL.path.hasSuffix(".app") else {
+            NSWorkspace.shared.open(pageURL)
+            return
+        }
+        state = .downloading
+        Task {
+            do {
+                var req = URLRequest(url: dl)
+                req.timeoutInterval = 120
+                let (tmpZip, resp) = try await URLSession.shared.download(for: req)
+                if let http = resp as? HTTPURLResponse, http.statusCode >= 400 {
+                    state = .failed("下载失败（HTTP \(http.statusCode)）")
+                    return
+                }
+                state = .installing
+                let workDir = FileManager.default.temporaryDirectory.appendingPathComponent("lingo-update-\(UUID().uuidString)")
+                let extractDir = workDir.appendingPathComponent("extracted")
+                try FileManager.default.createDirectory(at: extractDir, withIntermediateDirectories: true)
+                let zipCopy = workDir.appendingPathComponent("update.zip")
+                try FileManager.default.moveItem(at: tmpZip, to: zipCopy)
+
+                let unzip = Process()
+                unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+                unzip.arguments = ["-xk", zipCopy.path, extractDir.path]
+                try unzip.run()
+                unzip.waitUntilExit()
+                guard unzip.terminationStatus == 0 else {
+                    state = .failed("解压更新包失败")
+                    return
+                }
+                guard let newApp = Self.findApp(in: extractDir) else {
+                    state = .failed("更新包里未找到应用")
+                    return
+                }
+
+                let targetApp = Bundle.main.bundleURL
+                let targetParent = targetApp.deletingLastPathComponent()
+                guard FileManager.default.isWritableFile(atPath: targetParent.path) else {
+                    NSWorkspace.shared.activateFileViewerSelecting([newApp])
+                    state = .available(version: ver, downloadURL: dl, pageURL: pageURL)
+                    return
+                }
+
+                let script = workDir.appendingPathComponent("apply.sh")
+                let body = """
+                #!/bin/sh
+                PID="$1"
+                NEW_APP="$2"
+                TARGET_APP="$3"
+                WORK_DIR="$4"
+                while kill -0 "$PID" 2>/dev/null; do sleep 0.2; done
+                rm -rf "$TARGET_APP"
+                /usr/bin/ditto "$NEW_APP" "$TARGET_APP"
+                /usr/bin/open -n "$TARGET_APP"
+                rm -rf "$WORK_DIR"
+                """
+                try body.write(to: script, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+                let apply = Process()
+                apply.executableURL = URL(fileURLWithPath: "/bin/sh")
+                apply.arguments = [script.path, "\(ProcessInfo.processInfo.processIdentifier)", newApp.path, targetApp.path, workDir.path]
+                try apply.run()
+                NSApp.terminate(nil)
+            } catch {
+                state = .failed("更新失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    private static func findApp(in dir: URL) -> URL? {
+        guard let e = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else { return nil }
+        for case let u as URL in e {
+            if u.pathExtension == "app" { return u }
+        }
+        return nil
+    }
+
+    static func isNewer(_ remote: String, than local: String) -> Bool {
+        let r = remote.split(separator: ".").map { Int($0) ?? 0 }
+        let l = local.split(separator: ".").map { Int($0) ?? 0 }
+        let n = max(r.count, l.count)
+        for i in 0..<n {
+            let rv = i < r.count ? r[i] : 0
+            let lv = i < l.count ? l[i] : 0
+            if rv != lv { return rv > lv }
+        }
+        return false
+    }
 }

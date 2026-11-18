@@ -50,7 +50,10 @@ final class PopoverController {
         if isWord {
             model.kind = .word
             model.entry = LocalDictionary.lookup(text.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?\"“”()")))
-            if let e = model.entry { MainModel.shared.addHistory(e.headword) }
+            if let e = model.entry {
+                MainModel.shared.addHistory(e.headword)
+                if settings.autoSpeak { Speech.shared.speak(e.headword, lang: settings.autoSpeakAccent) }
+            }
         } else if settings.autoSentence {
             model.kind = .translate
             run(skipCache: false)
@@ -82,12 +85,24 @@ final class PopoverController {
         dismiss()
     }
 
+    func enableReturnHook() {
+        updateReturnHook()
+    }
+
     func showTranslation(text: String, at mouse: NSPoint) {
+        showTranslation(text: text, near: mouse, below: nil, returnHook: true)
+    }
+
+    func showTranslation(text: String, below rect: NSRect, returnHook: Bool = true) {
+        showTranslation(text: text, near: .zero, below: rect, returnHook: returnHook)
+    }
+
+    private func showTranslation(text: String, near mouse: NSPoint, below rect: NSRect?, returnHook: Bool) {
         cancel()
         model.text = text; model.output = ""; model.entry = nil; model.kind = .translate; model.state = .idle
         run(skipCache: false)
-        present(near: mouse)
-        updateReturnHook()
+        present(near: mouse, below: rect)
+        if returnHook { updateReturnHook() } else { HotKeys.shared.setReturnHook(nil) }
     }
 
     /// Double-clicked word inside the popover: show that word's entry in place.
@@ -95,6 +110,7 @@ final class PopoverController {
         guard let e = LocalDictionary.lookup(w) else { HUD.show("词典里没有 “\(w)”"); return }
         model.text = w; model.entry = e; model.kind = .word
         MainModel.shared.addHistory(e.headword)
+        if settings.autoSpeak { Speech.shared.speak(e.headword, lang: settings.autoSpeakAccent) }
         updateReturnHook()
     }
 
@@ -175,7 +191,7 @@ final class PopoverController {
     }
 
     // MARK: panel
-    private func present(near mouse: NSPoint) {
+    private func present(near mouse: NSPoint, below rect: NSRect? = nil) {
         if panel == nil {
             let h = NSHostingController(rootView: ScaleFit { PopoverView(model: self.model, ctl: self) })
             h.sizingOptions = [.preferredContentSize]
@@ -195,12 +211,17 @@ final class PopoverController {
         }
         host?.view.layoutSubtreeIfNeeded()
         let size = host?.preferredContentSize ?? NSSize(width: 360, height: 140)
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main!
+        let anchorPoint = rect.map { NSPoint(x: $0.midX, y: $0.midY) } ?? mouse
+        let screen = NSScreen.screens.first { $0.frame.contains(anchorPoint) } ?? NSScreen.main!
         let vf = screen.visibleFrame
         visible = vf
-        var topY = mouse.y - 14                     // below the cursor
-        if topY - size.height < vf.minY { topY = mouse.y + size.height + 28 }   // not enough room: flip above
-        topLeft = NSPoint(x: mouse.x - 24, y: topY)
+        if let rect = rect {
+            topLeft = NSPoint(x: rect.midX - size.width / 2, y: rect.minY - 8)
+        } else {
+            var topY = mouse.y - 14                     // below the cursor
+            if topY - size.height < vf.minY { topY = mouse.y + size.height + 28 }   // not enough room: flip above
+            topLeft = NSPoint(x: mouse.x - 24, y: topY)
+        }
         panel?.setFrame(fitted(size), display: true)
         panel?.alphaValue = 1
         panel?.orderFrontRegardless()
